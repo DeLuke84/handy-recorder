@@ -7,7 +7,7 @@
 set -euo pipefail
 
 installer=$1
-registry=$2
+registry=${2:?no registry url}
 dir=$3
 here=$(cd "$(dirname "$0")" && pwd)
 

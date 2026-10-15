@@ -186,7 +186,9 @@ jobs:
           name: package
           path: ${{ runner.temp }}/package
       - name: Start a local registry with the packages
-        run: echo "REGISTRY=$(bindings/node/test/ci/local-registry.sh "$RUNNER_TEMP/package" "$RUNNER_TEMP/registry")" >>"$GITHUB_ENV"
+        run: |
+          registry=$(bindings/node/test/ci/local-registry.sh "$RUNNER_TEMP/package" "$RUNNER_TEMP/registry")
+          echo "REGISTRY=$registry" >>"$GITHUB_ENV"
       - name: Install and smoke test
         run: |
           if [ "${{ matrix.name }}" = "Windows arm64" ]; then test "$(node -p process.arch)" = arm64; fi

@@ -21,6 +21,8 @@ packages:
   "@handy-computer/*": { access: \$all, publish: \$all }
 log: { type: stdout, format: pretty, level: warn }
 YAML
+# Download it first: on Windows that alone can take over a minute.
+npx --yes verdaccio@6 --version >&2
 npx --yes verdaccio@6 --config "$work/config.yaml" --listen 4873 >"$work/verdaccio.log" 2>&1 &
 for _ in $(seq 60); do curl -sf "${url}-/ping" >/dev/null && break; sleep 1; done
 curl -sf "${url}-/ping" >/dev/null || { cat "$work/verdaccio.log" >&2; exit 1; }
