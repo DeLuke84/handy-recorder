@@ -2,11 +2,11 @@
 # Runs the smoke test for each installer:runtime pair (by default every
 # package manager and every runtime once), then fails if any failed.
 #
-#   package-matrix.sh <tarball, or its folder> <work dir> [installer:runtime...]
+#   package-matrix.sh <registry url> <work dir> [installer:runtime...]
 set -uo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
-package=$1
+registry=$1
 work=$2
 shift 2
 combos=("$@")
@@ -33,7 +33,7 @@ for combo in "${combos[@]}"; do
     # Install once per package manager.
     if [[ $installed != *" $installer "* && $broken != *" $installer "* ]]; then
         group "install with $installer"
-        if "$here/install-package.sh" "$installer" "$package" "$dir"; then
+        if "$here/install-package.sh" "$installer" "$registry" "$dir"; then
             installed+="$installer "
         else
             broken+="$installer "

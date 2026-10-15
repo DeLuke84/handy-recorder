@@ -3,16 +3,16 @@
 # and checks the outcome is <expect>: ok, alsa (the install-ALSA hint), or
 # no-prebuild.
 #
-#   distro-check.sh <expect> <tarball, or its directory>
+#   distro-check.sh <expect> <registry url>
 set -uo pipefail
 
 expect=$1
-tarball=$2
+registry=$2
 here=$(cd "$(dirname "$0")" && pwd)
 . /etc/os-release
 echo "== $PRETTY_NAME, node $(node --version), $(ldd --version 2>&1 | head -n1)"
 
-"$here/install-package.sh" npm "$tarball" /tmp/smoke >/dev/null || exit 1
+"$here/install-package.sh" npm "$registry" /tmp/smoke >/dev/null || exit 1
 cd /tmp/smoke
 out=$(node smoke.mjs 2>&1)
 status=$?
