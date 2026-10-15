@@ -45,7 +45,10 @@ node test/run.mjs                         # every test, under this Node
 node test/run.mjs --runtime bun           # ... under Bun
 node test/run.mjs --runtime "deno run -A" # ... under Deno
 npm run typecheck      # index.d.ts against test/types.ts
+scripts/pack.sh dist   # the published .tgz files, from every platform's binary in prebuilds/
 ```
+
+The binaries ship in a package per platform, `@handy-computer/recorder-<platform>`, which this package lists as optional dependencies; `native.js` loads the one installed, or a binary in `prebuilds/` if there is one.
 
 The tests use a small runner of their own (`test/harness.mjs`) so the same files run unchanged under every runtime. `test/recording.test.mjs` covers recording behavior over the fake microphone. `test/lifecycle.test.mjs` runs processes that exit, get signalled, throw, use worker threads, reload through jiti, or load the package from a compiled Bun binary, as pi does.
 

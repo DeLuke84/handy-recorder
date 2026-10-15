@@ -126,7 +126,8 @@ jobs:
           path: bindings/node/prebuilds/*.node
           if-no-files-found: error
 
-  # One .tgz with all six binaries, as `npm publish` would make it.
+  # A .tgz per platform with its binary, and the main package's .tgz, which
+  # depends on all six as optional dependencies.
   package:
     needs: build
     runs-on: ubuntu-24.04
@@ -143,20 +144,16 @@ jobs:
           pattern: prebuilds-*
           path: bindings/node/prebuilds
           merge-multiple: true
-      - name: Exactly the six binaries native.js loads
-        run: |
-          for target in darwin-arm64 darwin-x64 linux-x64-gnu linux-arm64-gnu win32-x64-msvc win32-arm64-msvc; do
-            test -f "prebuilds/recorder.$target.node" || { echo "missing recorder.$target.node"; exit 1; }
-          done
-          test "$(ls prebuilds/*.node | wc -l)" -eq 6
-      - run: npm pack
+      - run: npm ci
+      - run: scripts/pack.sh dist
       - uses: actions/upload-artifact@v4
         with:
           name: package
-          path: bindings/node/*.tgz
+          path: bindings/node/dist/*.tgz
 
-  # Installs the .tgz with each package manager (scripts off) and runs
-  # test/smoke.mjs; then records real audio where the runner can fake a mic.
+  # Publishes the packages to a local registry, installs from it with each
+  # package manager (scripts off), and runs test/smoke.mjs; then records real
+  # audio where the runner can fake a mic.
   package-check:
     name: Package (${{ matrix.name }})
     needs: package
@@ -188,10 +185,14 @@ jobs:
         with:
           name: package
           path: ${{ runner.temp }}/package
+      - name: Start a local registry with the packages
+        run: |
+          registry=$(bindings/node/test/ci/local-registry.sh "$RUNNER_TEMP/package" "$RUNNER_TEMP/registry")
+          echo "REGISTRY=$registry" >>"$GITHUB_ENV"
       - name: Install and smoke test
         run: |
           if [ "${{ matrix.name }}" = "Windows arm64" ]; then test "$(node -p process.arch)" = arm64; fi
-          bindings/node/test/ci/package-matrix.sh "$RUNNER_TEMP/package" "$RUNNER_TEMP/smoke" ${{ matrix.combos }}
+          bindings/node/test/ci/package-matrix.sh "$REGISTRY" "$RUNNER_TEMP/smoke" ${{ matrix.combos }}
 
       # BlackHole loops its output back to its input; no reboot needed.
       - name: Record from BlackHole (macOS)
@@ -208,7 +209,8 @@ jobs:
           trap 'kill $! 2>/dev/null || true' EXIT
           sleep 1
           cd "$RUNNER_TEMP/smoke/npm" && node smoke.mjs
-      # x64 Node under Rosetta: the only place the darwin-x64 binary loads.
+      # x64 Node under Rosetta: the only place the darwin-x64 binary loads. npm
+      # under x64 Node installs the darwin-x64 package instead of darwin-arm64.
       - uses: actions/setup-node@v4
         if: runner.os == 'macOS'
         with:
@@ -218,7 +220,8 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           test "$(node -p process.arch)" = x64
-          out=$(cd "$RUNNER_TEMP/smoke/npm" && node smoke.mjs)
+          bindings/node/test/ci/install-package.sh npm "$REGISTRY" "$RUNNER_TEMP/smoke-x64"
+          out=$(cd "$RUNNER_TEMP/smoke-x64" && node smoke.mjs)
           echo "$out"
           grep -q "darwin-x64" <<<"$out"
 
@@ -236,8 +239,8 @@ jobs:
         run: |
           # check <image> <expectation> [setup command]
           check() {
-            docker run --rm -v "$GITHUB_WORKSPACE:/repo:ro" -v "$RUNNER_TEMP/package:/package:ro" "$1" \
-              sh -c "${3:-true} && { command -v bash >/dev/null || apk add --no-cache bash >/dev/null; } && bash /repo/bindings/node/test/ci/distro-check.sh $2 /package" \
+            docker run --rm --network host -v "$GITHUB_WORKSPACE:/repo:ro" "$1" \
+              sh -c "${3:-true} && { command -v bash >/dev/null || apk add --no-cache bash >/dev/null; } && bash /repo/bindings/node/test/ci/distro-check.sh $2 $REGISTRY" \
               | tee /dev/stderr | grep '^RESULT' >>"$GITHUB_STEP_SUMMARY"
           }
           echo "### Distributions" >>"$GITHUB_STEP_SUMMARY"
@@ -249,9 +252,10 @@ jobs:
           check node:22-alpine no-prebuild || failed=1        # musl: no binary yet
           exit $failed
 
-  # Publishes the .tgz package-check tested, through npm trusted publishing:
-  # no token, and provenance is automatic. npm's trusted publisher for the
-  # package names this repository and workflow file (node.yml).
+  # Publishes the .tgz files package-check tested, through npm trusted
+  # publishing: no token, and provenance is automatic. Each of the seven
+  # packages has a trusted publisher on npm naming this repository and
+  # workflow file (node.yml).
   publish:
     if: startsWith(github.ref, 'refs/tags/node-v')
     needs: [package, package-check]
@@ -271,14 +275,24 @@ jobs:
           name: package
       - name: Publish
         run: |
-          tgz=$(ls handy-computer-recorder-*.tgz)
-          version=$(tar -xOzf "$tgz" package/package.json | jq -r .version)
+          main=$(ls handy-computer-recorder-[0-9]*.tgz)
+          version=$(tar -xOzf "$main" package/package.json | jq -r .version)
           if [ "node-v$version" != "$GITHUB_REF_NAME" ]; then
             echo "tag $GITHUB_REF_NAME doesn't match package version $version"
             exit 1
           fi
           # A prerelease (0.1.0-beta.1) mustn't become `latest`.
           case "$version" in
-            *-*) npm publish "$tgz" --tag next ;;
-            *) npm publish "$tgz" ;;
+            *-*) tag=next ;;
+            *) tag=latest ;;
           esac
+          # The platform packages first: the main package depends on them.
+          for tgz in $(ls *.tgz | grep -vx "$main") "$main"; do
+            name=$(tar -xOzf "$tgz" package/package.json | jq -r .name)
+            # A rerun after a partial failure skips what's out already.
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "$name@$version is already published"
+            else
+              npm publish "$tgz" --tag "$tag"
+            fi
+          done

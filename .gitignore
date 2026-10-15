@@ -6,3 +6,5 @@
 /bindings/node/build
 /bindings/node/prebuilds
 /bindings/node/*.tgz
+/bindings/node/npm
+/bindings/node/dist
