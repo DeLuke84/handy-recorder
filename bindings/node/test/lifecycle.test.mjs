@@ -4,9 +4,9 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fixture, run, runtimeName, test } from "./harness.mjs";
 
@@ -107,6 +107,29 @@ test("loaded through jiti, reloaded while recording (as pi does)", async () => {
   assert.match(result.stdout, /first [1-9]\d* complete true; second [1-9]\d* complete true/);
 });
 
+// Lays the package out in dir as npm installs it: the test build in its
+// platform package, and extension.ts importing the package by name. Loading
+// it without HANDY_RECORDER_NATIVE goes through native.js's resolution.
+function install(dir) {
+  const { HANDY_RECORDER_NATIVE: build, ...env } = process.env;
+  const suffix = basename(build).replace(/^recorder\.|\.node$/g, "");
+  const root = fileURLToPath(new URL("../", import.meta.url));
+  const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+  const main = join(dir, "node_modules", pkg.name);
+  const platform = `${main}-${suffix}`;
+  mkdirSync(main, { recursive: true });
+  mkdirSync(platform);
+  for (const file of ["index.js", "native.js"]) copyFileSync(join(root, file), join(main, file));
+  pkg.optionalDependencies = { [`${pkg.name}-${suffix}`]: pkg.version };
+  writeFileSync(join(main, "package.json"), JSON.stringify(pkg));
+  copyFileSync(build, join(platform, `recorder.${suffix}.node`));
+  const platformPkg = { name: `${pkg.name}-${suffix}`, version: pkg.version, main: `recorder.${suffix}.node` };
+  writeFileSync(join(platform, "package.json"), JSON.stringify(platformPkg));
+  const extension = readFileSync(join(root, "test", "fixtures", "extension.ts"), "utf8");
+  writeFileSync(join(dir, "extension.ts"), extension.replace('"../../index.js"', `"${pkg.name}"`));
+  return { extension: join(dir, "extension.ts"), env };
+}
+
 // pi also ships as a `bun build --compile` binary, which loads extensions
 // from disk through jiti. The result doesn't depend on the runtime running
 // these tests, so it runs once, under Bun.
@@ -119,7 +142,8 @@ test("loaded by a compiled Bun binary through jiti (pi's binary)", async () => {
       encoding: "utf8",
     });
     assert.equal(build.status, 0, build.stderr);
-    const result = spawnSync(host, [join(fixtures, "extension.ts")], { encoding: "utf8", timeout: 20_000 });
+    const { extension, env } = install(dir);
+    const result = spawnSync(host, [extension], { encoding: "utf8", timeout: 20_000, env });
     assert.equal(result.status, 0, `${result.signal ?? ""}\n${result.stdout}${result.stderr}`);
     assert.match(result.stdout, /host: compiled true/);
     assert.match(result.stdout, /extension: [1-9]\d* samples, [1-9]\d* chunks, complete true/);
