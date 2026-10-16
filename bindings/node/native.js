@@ -48,7 +48,9 @@ function load() {
     file = local;
   } else if (suffix && platformPackage in optionalDependencies) {
     try {
-      file = require.resolve(platformPackage);
+      // Its package.json, not the package: a compiled Bun binary (pi's) can't
+      // resolve a package whose main is a .node file.
+      file = join(dirname(require.resolve(`${platformPackage}/package.json`)), `recorder.${suffix}.node`);
     } catch (error) {
       throw new Error(
         `@handy-computer/recorder needs ${platformPackage}, which isn't installed. Package managers` +
