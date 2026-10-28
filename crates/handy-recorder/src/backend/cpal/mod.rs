@@ -397,7 +397,10 @@ impl OpenDevice for CpalOpenDevice {
         data: DataCallback,
         error: ErrorCallback,
     ) -> Result<Box<dyn InputStream>, BackendError> {
-        #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
+        #[cfg_attr(
+            not(any(target_os = "linux", target_os = "windows")),
+            allow(unused_mut)
+        )]
         let mut config = self.config.config();
         #[cfg(target_os = "linux")]
         let watch = match &self.device_id {
@@ -408,6 +411,15 @@ impl OpenDevice for CpalOpenDevice {
         if self.host == cpal::HostId::PulseAudio {
             let frames = pulse::fragment_frames(config.sample_rate);
             log::debug!("requesting {frames}-frame fragments from PulseAudio");
+            config.buffer_size = cpal::BufferSize::Fixed(frames);
+        }
+        #[cfg(target_os = "windows")]
+        {
+            // Reserve für in Schüben eintreffendes RDP-Audio; Callbacks folgen
+            // weiterhin der Geräteperiode. Nicht auf den gemeldeten Pufferbereich
+            // begrenzen: Remote Audio meldet dort nur die Geräteperiode.
+            let frames = config.sample_rate / 2;
+            log::debug!("requesting {frames}-frame (500 ms) capture buffer from WASAPI");
             config.buffer_size = cpal::BufferSize::Fixed(frames);
         }
         let build_started = Instant::now();
